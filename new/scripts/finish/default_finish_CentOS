@@ -1,0 +1,161 @@
+#!/bin/bash
+
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:/root/bin
+http_proxy=http://10.51.8.137:3128
+ftp_proxy=http://10.51.8.137:3128
+export PATH http_proxy ftp_proxy
+ver=`awk '{
+   if ( $1 ~ /Cent/ ) { print $1"/"$3"/"}
+   if ( $1 ~ /Red/ && $2 ~ /Hat/ ) { print "RH/EL_"$7"/"}
+   if ( $1 ~ /Oracle/ && $2 ~ /Linux/ ) { print "OL/"$5"/"}
+  }' /etc/system-release`
+pkgs="/mnt/nfs/packages/$ver/"
+tree="/mnt/nfs/install_tree/$ver/"
+
+
+# remove boot fluff
+
+echo "########################################"
+echo "## striping fluffy shit out of bootup ##"
+echo "########################################"
+sed -e "s/rhgb.*quiet//" -i /boot/grub/menu.lst
+plymouth-set-default-theme details > /dev/null 2>&1
+# not needed as vmtools will rebuild the initrd on 1st boot
+#/usr/libexec/plymouth/plymouth-update-initrd > /dev/null 2>&1
+echo "############## done ####################"
+
+
+echo "########################################"
+echo "######### running yum update ###########"
+echo "########################################"
+yum -y update
+echo "############## done ####################"
+
+
+
+echo "OPTIONS=\"-o ListenAddress=\"\`ifconfig mgmt| awk '/inet / {gsub(/addr:/,\"\",$ 2); print $ 2}'\` " >> /etc/sysconfig/sshd
+
+
+echo "####################################################"
+echo "## turn off stuff we dont want running by default ##"
+echo "####################################################"
+/sbin/chkconfig  kudzu off
+/sbin/chkconfig  cups off
+/sbin/chkconfig  snmptrapd off
+/sbin/chkconfig  irda off
+/sbin/chkconfig  microcode_ctl off
+/sbin/chkconfig  iptables on
+/sbin/chkconfig  smartd off
+/sbin/chkconfig  nfslock off
+/sbin/chkconfig  rpcidmapd off
+/sbin/chkconfig  haldaemon off
+/sbin/chkconfig  auditd off
+/sbin/chkconfig  avahi-daemon off
+/sbin/chkconfig  avahi-dnsconfd off
+/sbin/chkconfig  gpm off
+/sbin/chkconfig  yum-updatesd off
+/sbin/chkconfig  xfs off
+/sbin/chkconfig  pcscd off
+/sbin/chkconfig  xinetd off
+/sbin/chkconfig  rpcbind off
+/sbin/chkconfig  ntpd on
+
+echo "############## done ####################"
+
+
+echo "########################################"
+echo "###### installing extra packages #######"
+echo "########################################"
+
+cd $pkgs
+  yum --nogpgcheck -y localinstall *.rpm
+echo "############## done ####################"
+
+echo "########################################"
+echo "######### installing tarballs ##########"
+echo "########################################"
+
+ls *.tgz | while read p; do
+  echo "extracting $P"
+  tar xzf $p -C /
+done
+
+echo "############## done ####################"
+
+# put vmtools on no matter what incase we fail to detect vmtools
+cp -v /mnt/nfs/packages/linux-vmtools /opt/
+## attempt to detect if vmware is installed
+if ( dmesg | grep -qi vmware ) ; then
+ cd /var/tmp/ 
+ echo extracting vmware tools
+ tar xzf /opt/linux-vmtools 
+ echo "cd /var/tmp/vmware-tools-distrib/ ; ./vmware-install.pl --default  " >> /etc/rc.local
+fi 
+
+# turn off ntp for 1st boot
+ /sbin/chkconfig ntpd on >> /etc/rc.local
+ /sbin/chkconfig ntpd off
+
+# tweak fstab to show tmpfs
+echo -en "# do you want tmpfs, if so uncomment this\n#tmpfs /tmp                    tmpfs   size=4G,nr_inodes=10k,mode=0777 0 0\n" >> /etc/fstab
+
+
+echo "########################################"
+echo "############# doing tree sync ##########"
+echo "########################################"
+
+for p in /mnt/nfs/install_tree/generic/ $tree/
+do
+   cd $p
+    /usr/bin/rsync -a $p/ /
+    find . -exec chown root:root /{} \;
+done
+ chown -R root:root /opt/BUAgent /opt/nimsoft
+
+cd /
+
+# startup evault at boot
+/sbin/chkconfig vvagent on
+
+echo "############## done ####################"
+
+## build resq
+# shift default repos for the mo
+echo "## building adv365 resq ##"
+for p in / /var /boot
+do
+rsync -aHAX -x $p/ /adv365_rescue/$p/ &
+done
+
+rsync -aHAX -x --exclude="/adv364_rescue/**" / /adv365_rescue/
+
+
+## end build resq
+
+
+# if we are an hp put hp tools on
+if ( dmidecode -t 1 | grep -iq ProLiant ) ; then
+# small frig to cater for hp crapness with zlib
+ln -sv /lib64/libz.so.1 /usr/lib/.
+cd $pkgs/HP
+ yum --nogpgcheck -y localinstall *.rpm
+fi
+
+
+# some networky stuff
+ifconfig eth0| awk '/Link / {print "HWADDR="$NF}' >> /etc/sysconfig/network-scripts/ifcfg-mgmt
+ifconfig eth1| awk '/Link / {print "HWADDR="$NF}' >> /etc/sysconfig/network-scripts/ifcfg-pub
+rm /etc/sysconfig/network-scripts/ifcfg-eth[01]
+
+echo -e "nameserver 8.8.8.8\nnameserver 8.8.4.4\n" > /etc/resolv.conf
+
+# setup sudo
+echo "%root  ALL=(ALL)       NOPASSWD: ALL" > /etc/sudoers.d/root
+
+
+
+
+echo "/sbin/init 6 & " >> /etc/rc.local
+echo "echo touch /var/lock/subsys/local > /etc/rc.local"  >> /etc/rc.local
+
+

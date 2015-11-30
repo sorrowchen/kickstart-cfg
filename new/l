@@ -1,0 +1,108 @@
+install
+network --bootproto=dhcp --nodns --noipv6
+nfs --server=10.51.8.4 --dir=/kickstart/os/Centos/6.4_x86_x64
+lang en_GB.UTF-8
+keyboard uk
+skipx
+text
+rootpw --iscrypted $1$j6Uo0vMi$T9GMZqS7FhxAkCDa2omly/
+user --name=cscott --groups=root --password=letmein --shell=/bin/bash --uid=1087
+firewall --disabled
+selinux --disabled
+authconfig --enableshadow --enablemd5 
+timezone --utc Europe/London
+zerombr yes
+bootloader --location=mbr
+%include /tmp/part-include
+reboot
+%packages 
+@English (UK) Support
+@Core
+@Base
+-cups
+-cups-libs
+-procmail
+-spamassassin
+nfs-utils
+nmap
+redhat-lsb
+glib2
+glibc.i686
+glibc-devel
+glibc-headers
+libgcc
+libstdc++
+libXxf86misc
+nss
+nss-softokn
+nss-softokn-freebl.i686
+gcc
+libnl-devel
+rrdtool
+iptraf
+ltrace
+gd      
+graphviz  
+libXaw      
+libXmu       
+libXpm        
+lm_sensors-libs
+net-snmp-libs 
+libacl.i686
+libstdc++.i686 
+libattr.i686
+%pre
+DIR="/sys/block"
+for DEV in sda sdb sdc sdd hda hdb; do
+  if [ -d $DIR/$DEV ]; then
+    REMOVABLE=`cat $DIR/$DEV/removable`
+    if (( $REMOVABLE == 0 )); then
+      echo $DEV
+      SIZE=`cat $DIR/$DEV/size`
+      if [ $GB -gt $MINSIZE ]; then
+        echo "$(($SIZE/2**21))"
+        if [ -z $ROOTDRIVE ]; then
+        fi
+      fi
+    fi
+  fi
+done
+echo "ROOTDRIVE=$ROOTDRIVE"
+if [ $GB -lt 160 ]; then
+cat << EOF > /tmp/part-include
+zerombr
+clearpart --all --drives=$ROOTDRIVE --initlabel
+bootloader --location=mbr --driveorder=$ROOTDRIVE
+part pv.0 --size=100 --grow --ondisk=$ROOTDRIVE
+part /boot --fstype "ext4" --size=512 --ondisk=$ROOTDRIVE
+part pv.01 --size=1 --grow --ondisk=$ROOTDRIVE
+volgroup vg_system pv.01
+logvol  / --vgname=vg_system --fstype ext4 --size=8192  --name=lv_root
+logvol  /home --vgname=vg_system --fstype ext4  --size=256 --grow  --name=lv_home
+logvol  /var --vgname=vg_system --fstype ext4  --size=1024 --grow  --name=lv_var
+logvol  /tmp --vgname=vg_system  --fstype ext4 --size=512 --grow  --name=lv_tmp
+logvol  /opt  --vgname=vg_system --fstype ext4  --size=1024 --grow  --name=lv_opt
+logvol  swap --fstype swap --vgname=vg_system  --size=1024 --grow  --name=lv_swap
+fi
+if [ -e /dev/sdb ]  ; then
+cat << EOF >> /tmp/part-include
+clearpart --all --drives=sdb --initlabel
+bootloader --location=mbr --driveorder=sdb
+part pv.02 --size=1 --grow --ondisk=sdb
+volgroup vg_swap pv.02
+logvol  swap --fstype swap --vgname=vg_swap  --size=1024  --name=lv_swap2
+fi
+if [ -e /dev/sdc ]  ; then
+cat << EOF >> /tmp/part-include
+clearpart --all --drives=sdc --initlabel
+bootloader --location=mbr --driveorder=sdc
+part pv.03 --size=1 --grow --ondisk=sdc
+volgroup vg_data pv.03
+logvol  /data  --vgname=vg_data --fstype ext4  --size=256  --name=lv_spare
+fi
+%post --log=/root/ks-post.log
+/bin/rpm --import /usr/share/rhn/RPM-GPG-KEY*
+/bin/rpm -e comps
+mkdir -p /mnt/nfs
+mount -o ro -t nfs 10.51.8.4:/kickstart /mnt/nfs
+/mnt/nfs/scripts/finish/default_finish_CentOS 2>&1 | tee /root/ks-script.log
